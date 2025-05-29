@@ -56,7 +56,7 @@ def handle_other_messages(message):
         send_notes_list(message.chat.id)
 
     elif text == "🤖 Анализ от ИИ":
-        analyze_notes(message.chat.id)
+        analyze_notes_step1(message)
 
 
     else:
@@ -110,12 +110,38 @@ def add_note(message):
 
 
 def delete_note(message):
+    global notes
+    global reminders
     try:
         note_id = int(message.text.strip())
         if note_id in notes:
             notes.pop(note_id)
-            global reminders
-            reminders = [r for r in reminders if r[1] != note_id]  # Удалить связанные напоминания
+
+            # Сохраняем старые заметки с ключами
+            old_notes = dict(notes)
+
+            # Перенумеруем заметки
+            notes = {new_id: old_notes[old_id] for new_id, old_id in enumerate(sorted(old_notes.keys()), start=1)}
+
+            # Обновляем reminders с новыми номерами заметок
+            new_reminders = []
+            for chat, rem_note_id, rem_time in reminders:
+                if rem_note_id == note_id:
+
+                    continue
+
+                try:
+                    # Найдём индекс нового note_id по старому note_id
+                    new_id = None
+                    for k, v in notes.items():
+                        if old_notes.get(rem_note_id) == v:
+                            new_id = k
+                            break
+                    if new_id is not None:
+                        new_reminders.append((chat, new_id, rem_time))
+                except KeyError:
+                    pass  # если заметка была удалена, игнорируем
+            reminders = new_reminders
             bot.send_message(message.chat.id, f"Заметка {note_id} удалена.")
         else:
             bot.send_message(message.chat.id, "Такой заметки нет.")
@@ -130,7 +156,8 @@ def edit_note_step1(message):
         if note_id in notes:
             current_text = notes[note_id]
             msg = bot.send_message(message.chat.id,
-                                   f"Текущий текст заметки #{note_id}:\n\n{current_text}\n\nВведите новый текст для заметки:")
+                                   f"Текущий текст заметки #{note_id}:\n\n{current_text}\n\nВведите новый текст для "
+                                   f"заметки:")
             bot.register_next_step_handler(msg, edit_note_step2, note_id)
         else:
             bot.send_message(message.chat.id, "Такой заметки нет.")
@@ -198,7 +225,7 @@ def get_main_menu():
         InlineKeyboardButton("Список заметок", callback_data='list_notes'),
         InlineKeyboardButton("Удалить заметку", callback_data='delete_note'),
         InlineKeyboardButton("Редактировать заметку", callback_data='edit_note'),
-        InlineKeyboardButton("Анализ от ИИ", callback_data='analyze_notes')
+        InlineKeyboardButton("Анализ от ИИ", callback_data='analyze_notes_step1')
     )
     return markup
 
@@ -230,18 +257,35 @@ def reminder_worker():
         time.sleep(30)
 
 
-def analyze_notes(chat_id):
-    if len(notes) < 3:
-        bot.send_message(chat_id, "Для анализа нужно хотя бы 3 заметки.")
+def analyze_notes_step1(message):
+    if not notes:
+        bot.send_message(message.chat.id, "У вас пока нет заметок для анализа.")
         return
 
+    send_notes_list(message.chat.id)
+    bot.send_message(message.chat.id, "Введите номера заметок через запятую, которые хотите отправить на анализ:")
+    bot.register_next_step_handler(message, analyze_notes_step2)
+
+
+def analyze_notes_step2(message):
     if not API_KEY or not API_URL:
-        bot.send_message(chat_id, "Ошибка: API-ключ или URL не настроены.")
+        bot.send_message(message.chat_id, "Ошибка: API-ключ или URL не настроены.")
         return
 
     try:
-        # Отправляем запрос к API с последними заметками
-        notes_text = " ".join([text for _, text in sorted(notes.items())][-3:])  # Сливаем последние заметки
+        note_ids = list(map(int, message.text.split(',')))
+
+        selected_notes = [notes[note_id] for note_id in note_ids if note_id in notes]
+
+        if not selected_notes:
+            bot.send_message(message.chat.id, "Вы ввели неверные номера заметок. Попробуйте снова.")
+            return
+
+        if len(note_ids) < 3:
+            bot.send_message(message.chat.id, "Для анализа нужно хотя бы 3 заметки.")
+            return
+
+        notes_text = " ".join(selected_notes)
         payload = {
             "model": "qwen/qwq-32b:free",
             "messages": [
@@ -260,11 +304,13 @@ def analyze_notes(chat_id):
             response_data = response.json()
             # Извлечение текста ответа
             analysis = response_data.get("choices", [{}])[0].get("message", {}).get("content", "Нет данных.")
-            bot.send_message(chat_id, f"Анализ ваших заметок:\n\n{analysis}")
+            bot.send_message(message.chat.id, f"Анализ ваших заметок:\n\n{analysis}")
         else:
-            bot.send_message(chat_id, "Ошибка анализа. Попробуйте позже.")
+            bot.send_message(message.chat.id, "Ошибка анализа. Попробуйте позже.")
+    except ValueError:
+        bot.send_message(message.chat.id, "Введите корректные номера заметок через запятую.")
     except Exception as e:
-        bot.send_message(chat_id, f"Произошла ошибка: {str(e)}")
+        bot.send_message(message.chat_id, f"Произошла ошибка: {str(e)}")
 
 
 threading.Thread(target=reminder_worker, daemon=True).start()
