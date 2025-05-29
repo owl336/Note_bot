@@ -57,37 +57,17 @@ def handle_other_messages(message):
 
     elif text == "🤖 Анализ от ИИ":
         analyze_notes_step1(message)
+    elif text == "🔍 Поиск по заметкам":
+        if notes:
+            msg = bot.send_message(message.chat.id, "Введите текст для поиска в заметках:")
+            bot.register_next_step_handler(msg, search_notes)
+        else:
+            bot.send_message(message.chat.id, "У вас пока нет заметок для поиска.")
 
 
     else:
         bot.send_message(message.chat.id, "Я не понял ваше сообщение. Вот меню:")
         send_main_menu(message.chat.id)
-
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    if call.data == 'add_note':
-        msg = bot.send_message(call.message.chat.id, "Введите текст заметки (можно с временем).")
-        bot.register_next_step_handler(msg, add_note)
-
-    elif call.data == 'list_notes':
-        send_notes_list(call.message.chat.id)
-
-    elif call.data == 'delete_note':
-        if notes:
-            send_notes_list(call.message.chat.id)
-            msg = bot.send_message(call.message.chat.id, "Введите номер заметки для удаления:")
-            bot.register_next_step_handler(msg, delete_note)
-        else:
-            bot.send_message(call.message.chat.id, "У вас пока нет заметок.")
-
-    elif call.data == 'edit_note':
-        if notes:
-            send_notes_list(call.message.chat.id)
-            msg = bot.send_message(call.message.chat.id, "Введите номер заметки для редактирования:")
-            bot.register_next_step_handler(msg, edit_note_step1)
-        else:
-            bot.send_message(call.message.chat.id, "У вас пока нет заметок.")
 
 
 def add_note(message):
@@ -127,7 +107,6 @@ def delete_note(message):
             new_reminders = []
             for chat, rem_note_id, rem_time in reminders:
                 if rem_note_id == note_id:
-
                     continue
 
                 try:
@@ -218,18 +197,6 @@ def send_notes_list(chat_id):
     bot.send_message(chat_id, message_text)
 
 
-def get_main_menu():
-    markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton("Добавить заметку", callback_data='add_note'),
-        InlineKeyboardButton("Список заметок", callback_data='list_notes'),
-        InlineKeyboardButton("Удалить заметку", callback_data='delete_note'),
-        InlineKeyboardButton("Редактировать заметку", callback_data='edit_note'),
-        InlineKeyboardButton("Анализ от ИИ", callback_data='analyze_notes_step1')
-    )
-    return markup
-
-
 def send_main_menu(chat_id):
     markup = ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(
@@ -241,6 +208,7 @@ def send_main_menu(chat_id):
         KeyboardButton("📋 Показать список заметок")
     )
     markup.row(
+        KeyboardButton("🔍 Поиск по заметкам"),
         KeyboardButton("🤖 Анализ от ИИ")
     )
     bot.send_message(chat_id, "Выберите действие:", reply_markup=markup)
@@ -255,6 +223,35 @@ def reminder_worker():
                 bot.send_message(chat_id, f"Напоминание: {notes[note_id]}")
                 reminders.remove(reminder)
         time.sleep(30)
+
+
+def search_notes(message):
+    search_query = message.text.strip().lower()
+    if not search_query:
+        bot.send_message(message.chat.id, "Вы ввели пустой запрос.")
+        send_main_menu(message.chat.id)
+        return
+
+    found_notes = {}
+
+    for note_id, note_text in notes.items():
+        if search_query in note_text.lower():
+
+            highlighted_text = note_text.replace(
+                search_query,
+                f"*{search_query}*"
+            )
+            found_notes[note_id] = highlighted_text
+
+    if found_notes:
+        response = "🔍 Найдены заметки:\n\n"
+        for note_id, note_text in found_notes.items():
+            response += f"{note_id}. {note_text}\n\n"
+        bot.send_message(message.chat.id, response, parse_mode="Markdown")
+    else:
+        bot.send_message(message.chat.id, f"Заметки, содержащие '{search_query}', не найдены.")
+
+    send_main_menu(message.chat.id)
 
 
 def analyze_notes_step1(message):
