@@ -7,11 +7,13 @@ from datetime import datetime
 import re
 from dotenv import load_dotenv
 import os
+import requests
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 API_KEY = os.getenv('API_KEY')
+API_URL = os.getenv('API_URL')
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -52,6 +54,10 @@ def handle_other_messages(message):
 
     elif text == "📋 Показать список заметок":
         send_notes_list(message.chat.id)
+
+    elif text == "🤖 Анализ от ИИ":
+        analyze_notes(message.chat.id)
+
 
     else:
         bot.send_message(message.chat.id, "Я не понял ваше сообщение. Вот меню:")
@@ -191,7 +197,8 @@ def get_main_menu():
         InlineKeyboardButton("Добавить заметку", callback_data='add_note'),
         InlineKeyboardButton("Список заметок", callback_data='list_notes'),
         InlineKeyboardButton("Удалить заметку", callback_data='delete_note'),
-        InlineKeyboardButton("Редактировать заметку", callback_data='edit_note')
+        InlineKeyboardButton("Редактировать заметку", callback_data='edit_note'),
+        InlineKeyboardButton("Анализ от ИИ", callback_data='analyze_notes')
     )
     return markup
 
@@ -206,6 +213,9 @@ def send_main_menu(chat_id):
         KeyboardButton("✏️ Редактировать заметку"),
         KeyboardButton("📋 Показать список заметок")
     )
+    markup.row(
+        KeyboardButton("🤖 Анализ от ИИ")
+    )
     bot.send_message(chat_id, "Выберите действие:", reply_markup=markup)
 
 
@@ -218,6 +228,43 @@ def reminder_worker():
                 bot.send_message(chat_id, f"Напоминание: {notes[note_id]}")
                 reminders.remove(reminder)
         time.sleep(30)
+
+
+def analyze_notes(chat_id):
+    if len(notes) < 3:
+        bot.send_message(chat_id, "Для анализа нужно хотя бы 3 заметки.")
+        return
+
+    if not API_KEY or not API_URL:
+        bot.send_message(chat_id, "Ошибка: API-ключ или URL не настроены.")
+        return
+
+    try:
+        # Отправляем запрос к API с последними заметками
+        notes_text = " ".join([text for _, text in sorted(notes.items())][-3:])  # Сливаем последние заметки
+        payload = {
+            "model": "qwen/qwq-32b:free",
+            "messages": [
+                {"role": "system", "content": "Вы — дружелюбный помощник для анализа заметок. Общайтесь так, будто вы "
+                                              "отвечаете пользователю лично, помогаете ему разобраться и находите "
+                                              "решение. Не бойтесь добавлять эмодзи и дружелюбный тон, чтобы создать "
+                                              "теплую атмосферу! 😊."},
+                {"role": "user", "content": f"Проанализируйте следующие заметки и сделай краткий анализ + дай "
+                                            f"рекомендации в виде небольшого списка: {notes_text}"}
+            ]
+        }
+        headers = {"Authorization": f"Bearer {API_KEY}"}
+        response = requests.post(API_URL, json=payload, headers=headers)
+
+        if response.status_code == 200:
+            response_data = response.json()
+            # Извлечение текста ответа
+            analysis = response_data.get("choices", [{}])[0].get("message", {}).get("content", "Нет данных.")
+            bot.send_message(chat_id, f"Анализ ваших заметок:\n\n{analysis}")
+        else:
+            bot.send_message(chat_id, "Ошибка анализа. Попробуйте позже.")
+    except Exception as e:
+        bot.send_message(chat_id, f"Произошла ошибка: {str(e)}")
 
 
 threading.Thread(target=reminder_worker, daemon=True).start()
