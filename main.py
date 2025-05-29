@@ -1,15 +1,19 @@
 import dateparser
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 import re
-import dateparser
+from dotenv import load_dotenv
+import os
 
-bot = telebot.TeleBot('7810822364:AAEAgzX1ozEUa577OGB2LF3Zy1kQHW7rVdg')
+load_dotenv()
 
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+API_KEY = os.getenv('API_KEY')
 
+bot = telebot.TeleBot(BOT_TOKEN)
 
 # Словарь для хранения заметок
 notes = {}
@@ -19,43 +23,62 @@ reminders = []
 
 @bot.message_handler(commands=['start'])
 def start_message(message):
-    show_menu(message.chat.id)
+    send_main_menu(message.chat.id)
 
 
 @bot.message_handler(func=lambda message: True)
 def handle_other_messages(message):
-    bot.send_message(message.chat.id, "Я не понял ваше сообщение. Вот меню:", reply_markup=get_main_menu())
+    text = message.text
+
+    if text == "➕ Добавить заметку":
+        msg = bot.send_message(message.chat.id, "Введите текст заметки (можно с временем).")
+        bot.register_next_step_handler(msg, add_note)
+
+    elif text == "❌ Удалить заметку":
+        if notes:
+            send_notes_list(message.chat.id)
+            msg = bot.send_message(message.chat.id, "Введите номер заметки для удаления:")
+            bot.register_next_step_handler(msg, delete_note)
+        else:
+            bot.send_message(message.chat.id, "У вас пока нет заметок.")
+
+    elif text == "✏️ Редактировать заметку":
+        if notes:
+            send_notes_list(message.chat.id)
+            msg = bot.send_message(message.chat.id, "Введите номер заметки для редактирования:")
+            bot.register_next_step_handler(msg, edit_note_step1)
+        else:
+            bot.send_message(message.chat.id, "У вас пока нет заметок.")
+
+    elif text == "📋 Показать список заметок":
+        send_notes_list(message.chat.id)
+
+    else:
+        bot.send_message(message.chat.id, "Я не понял ваше сообщение. Вот меню:")
+        send_main_menu(message.chat.id)
 
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     if call.data == 'add_note':
-        msg = bot.send_message(call.message.chat.id,
-                               "Введите текст заметки (можно с временем).")
+        msg = bot.send_message(call.message.chat.id, "Введите текст заметки (можно с временем).")
         bot.register_next_step_handler(msg, add_note)
 
     elif call.data == 'list_notes':
-        if notes:
-            response = "Ваши заметки:\n"
-            response += "\n".join([f"{note_id}. {text}" for note_id, text in notes.items()])
-        else:
-            response = "У вас пока нет заметок."
-        bot.send_message(call.message.chat.id, response)
+        send_notes_list(call.message.chat.id)
 
     elif call.data == 'delete_note':
         if notes:
-            response = "Введите номер заметки для удаления:\n"
-            response += "\n".join([f"{note_id}. {text}" for note_id, text in notes.items()])
-            msg = bot.send_message(call.message.chat.id, response)
+            send_notes_list(call.message.chat.id)
+            msg = bot.send_message(call.message.chat.id, "Введите номер заметки для удаления:")
             bot.register_next_step_handler(msg, delete_note)
         else:
             bot.send_message(call.message.chat.id, "У вас пока нет заметок.")
 
     elif call.data == 'edit_note':
         if notes:
-            response = "Введите номер заметки для редактирования:\n"
-            response += "\n".join([f"{note_id}. {text}" for note_id, text in notes.items()])
-            msg = bot.send_message(call.message.chat.id, response)
+            send_notes_list(call.message.chat.id)
+            msg = bot.send_message(call.message.chat.id, "Введите номер заметки для редактирования:")
             bot.register_next_step_handler(msg, edit_note_step1)
         else:
             bot.send_message(call.message.chat.id, "У вас пока нет заметок.")
@@ -77,7 +100,7 @@ def add_note(message):
             bot.send_message(message.chat.id, "Заметка добавлена без напоминания.")
     else:
         bot.send_message(message.chat.id, "Текст заметки не может быть пустым.")
-
+    send_main_menu(message.chat.id)
 
 
 def delete_note(message):
@@ -92,25 +115,30 @@ def delete_note(message):
             bot.send_message(message.chat.id, "Такой заметки нет.")
     except ValueError:
         bot.send_message(message.chat.id, "Пожалуйста, укажите корректный номер заметки.")
+    send_main_menu(message.chat.id)
 
 
 def edit_note_step1(message):
     try:
         note_id = int(message.text.strip())
         if note_id in notes:
-            msg = bot.send_message(message.chat.id, "Введите новый текст для заметки:")
+            current_text = notes[note_id]
+            msg = bot.send_message(message.chat.id,
+                                   f"Текущий текст заметки #{note_id}:\n\n{current_text}\n\nВведите новый текст для заметки:")
             bot.register_next_step_handler(msg, edit_note_step2, note_id)
         else:
             bot.send_message(message.chat.id, "Такой заметки нет.")
+            send_main_menu(message.chat.id)
     except ValueError:
         bot.send_message(message.chat.id, "Пожалуйста, укажите корректный номер заметки.")
+        send_main_menu(message.chat.id)
 
 
 def edit_note_step2(message, note_id):
     new_text = message.text.strip()
     if new_text:
         notes[note_id] = new_text
-        time_to_remind = extract_time(notes)
+        time_to_remind = extract_time(new_text)
         if time_to_remind:
             reminders.append((message.chat.id, note_id, time_to_remind))
             bot.send_message(
@@ -121,11 +149,12 @@ def edit_note_step2(message, note_id):
             bot.send_message(message.chat.id, f"Заметка {note_id} успешно обновлена.")
     else:
         bot.send_message(message.chat.id, "Текст заметки не может быть пустым.")
+    send_main_menu(message.chat.id)
 
 
 def extract_time(note_text):
     patterns = [
-        r'через \d+ (минут|час|часов|день|дней|неделю|недель|месяц|месяцев)',  # через 2 часа и т.п.
+        r'через \d+ (минут|минуту|час|часов|день|дней|неделю|недель|месяц|месяцев)',  # через 2 часа и т.п.
         r'сегодня в \d{1,2}(:\d{2})?',  # сегодня в 6 или сегодня в 6:00
         r'завтра в \d{1,2}(:\d{2})?',  # завтра в 10 или завтра в 10:00
         r'послезавтра в \d{1,2}(:\d{2})?',
@@ -144,8 +173,16 @@ def extract_time(note_text):
     return None
 
 
-def show_menu(chat_id):
-    bot.send_message(chat_id, "Выберите действие:", reply_markup=get_main_menu())
+def send_notes_list(chat_id):
+    if not notes:
+        bot.send_message(chat_id, "У вас пока нет заметок.")
+        return
+
+    message_text = "Ваши заметки:\n"
+    for note_id, note_text in notes.items():
+        message_text += f"{note_id}. {note_text}\n"
+
+    bot.send_message(chat_id, message_text)
 
 
 def get_main_menu():
@@ -159,6 +196,19 @@ def get_main_menu():
     return markup
 
 
+def send_main_menu(chat_id):
+    markup = ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row(
+        KeyboardButton("➕ Добавить заметку"),
+        KeyboardButton("❌ Удалить заметку")
+    )
+    markup.row(
+        KeyboardButton("✏️ Редактировать заметку"),
+        KeyboardButton("📋 Показать список заметок")
+    )
+    bot.send_message(chat_id, "Выберите действие:", reply_markup=markup)
+
+
 def reminder_worker():
     while True:
         now = datetime.now()
@@ -170,8 +220,6 @@ def reminder_worker():
         time.sleep(30)
 
 
-
 threading.Thread(target=reminder_worker, daemon=True).start()
-
 
 bot.infinity_polling()
