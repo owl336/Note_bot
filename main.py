@@ -21,6 +21,8 @@ bot = telebot.TeleBot(BOT_TOKEN)
 notes = {}
 # Список для хранения напоминаний
 reminders = []
+# словарь хранения текущей страницы
+current_page = {}
 
 
 @bot.message_handler(commands=['start'])
@@ -45,12 +47,10 @@ def handle_other_messages(message):
             bot.send_message(message.chat.id, "У вас пока нет заметок.")
 
     elif text == "✏️ Редактировать заметку":
-        if notes:
-            send_notes_list(message.chat.id)
-            msg = bot.send_message(message.chat.id, "Введите номер заметки для редактирования:")
-            bot.register_next_step_handler(msg, edit_note_step1)
-        else:
-            bot.send_message(message.chat.id, "У вас пока нет заметок.")
+        edit_note_step1(message)
+
+    elif text in ["⬅️ Назад", "Вперед ➡️"]:
+        process_note_selection_for_edit(message)
 
     elif text == "📋 Показать список заметок":
         send_notes_list(message.chat.id)
@@ -63,7 +63,6 @@ def handle_other_messages(message):
             bot.register_next_step_handler(msg, search_notes)
         else:
             bot.send_message(message.chat.id, "У вас пока нет заметок для поиска.")
-
 
     else:
         bot.send_message(message.chat.id, "Я не понял ваше сообщение. Вот меню:")
@@ -130,23 +129,98 @@ def delete_note(message):
 
 
 def edit_note_step1(message):
+    if not notes:
+        bot.send_message(message.chat.id, "У вас пока нет заметок для редактирования.")
+        send_main_menu(message.chat.id)
+        return
+
+    current_page[message.chat.id] = 0
+    show_notes_page(message.chat.id)
+
+
+def show_notes_page(chat_id, page=0):
+    note_ids = sorted(notes.keys())
+    total_notes = len(note_ids)
+    notes_per_page = 4
+
+    total_pages = (total_notes + notes_per_page - 1) // notes_per_page
+
+    if page < 0:
+        page = 0
+    elif page >= total_pages:
+        page = total_pages - 1
+
+    current_page[chat_id] = page
+
+    start_idx = page * notes_per_page
+    end_idx = min(start_idx + notes_per_page, total_notes)
+    page_note_ids = note_ids[start_idx:end_idx]
+
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+
+    for note_id in page_note_ids:
+        note_preview = notes[note_id][:20] + "..." if len(notes[note_id]) > 20 else notes[note_id]
+        markup.add(KeyboardButton(f" {note_id}: {note_preview}"))
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(KeyboardButton("⬅️ Назад"))
+    if page < total_pages - 1:
+        nav_buttons.append(KeyboardButton("Вперед ➡️"))
+
+    if nav_buttons:
+        markup.row(*nav_buttons)
+
+    markup.add(KeyboardButton("❌ Отмена"))
+
+    bot.send_message(
+        chat_id,
+        f"Выберите заметку для редактирования (Страница {page + 1}/{total_pages}):",
+        reply_markup=markup
+    )
+
+
+def process_note_selection_for_edit(message):
+    if message.text == "❌ Отмена":
+        send_main_menu(message.chat.id)
+        return
+
+    # Обработка навигации
+    if message.text == "⬅️ Назад":
+        show_notes_page(message.chat.id, current_page.get(message.chat.id, 0) - 1)
+        return
+    elif message.text == "Вперед ➡️":
+        show_notes_page(message.chat.id, current_page.get(message.chat.id, 0) + 1)
+        return
+
     try:
-        note_id = int(message.text.strip())
+        note_id = int(message.text.split(":")[0].replace("").strip())
+
         if note_id in notes:
             current_text = notes[note_id]
-            msg = bot.send_message(message.chat.id,
-                                   f"Текущий текст заметки #{note_id}:\n\n{current_text}\n\nВведите новый текст для "
-                                   f"заметки:")
+
+            markup = ReplyKeyboardMarkup(resize_keyboard=True)
+            markup.add(KeyboardButton("❌ Отмена редактирования"))
+
+            msg = bot.send_message(
+                message.chat.id,
+                f"Текущий текст заметки #{note_id}:\n\n{current_text}\n\nВведите новый текст для заметки:",
+                reply_markup=markup
+            )
             bot.register_next_step_handler(msg, edit_note_step2, note_id)
         else:
             bot.send_message(message.chat.id, "Такой заметки нет.")
-            send_main_menu(message.chat.id)
-    except ValueError:
-        bot.send_message(message.chat.id, "Пожалуйста, укажите корректный номер заметки.")
-        send_main_menu(message.chat.id)
+            show_notes_page(message.chat.id, current_page.get(message.chat.id, 0))
+    except (ValueError, IndexError):
+        bot.send_message(message.chat.id, "Пожалуйста, выберите заметку из списка.")
+        show_notes_page(message.chat.id, current_page.get(message.chat.id, 0))
 
 
 def edit_note_step2(message, note_id):
+    if message.text == "❌ Отмена редактирования":
+        send_main_menu(message.chat.id)
+        return
+
     new_text = message.text.strip()
     if new_text:
         notes[note_id] = new_text
@@ -161,6 +235,7 @@ def edit_note_step2(message, note_id):
             bot.send_message(message.chat.id, f"Заметка {note_id} успешно обновлена.")
     else:
         bot.send_message(message.chat.id, "Текст заметки не может быть пустым.")
+
     send_main_menu(message.chat.id)
 
 
@@ -236,7 +311,6 @@ def search_notes(message):
 
     for note_id, note_text in notes.items():
         if search_query in note_text.lower():
-
             highlighted_text = note_text.replace(
                 search_query,
                 f"*{search_query}*"
