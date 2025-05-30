@@ -3,11 +3,16 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 import threading
 import time
-from datetime import datetime
 import re
 from dotenv import load_dotenv
 import os
 import requests
+import io
+from datetime import datetime, timedelta
+import matplotlib
+import matplotlib.pyplot as plt
+
+matplotlib.use('Agg')
 
 load_dotenv()
 
@@ -23,6 +28,27 @@ notes = {}
 reminders = []
 # словарь хранения текущей страницы
 current_page = {}
+
+# Переменные для статистики
+statistics = {
+    "notes_created": {},  # {date: count}
+    "notes_deleted": {},  # {date: count}
+    "ai_analysis": {},  # {date: count}
+    "total_ai_used": 0
+}
+
+
+def update_statistics(stat_type):
+    today = datetime.now().strftime("%m-%d")
+    if stat_type in statistics:
+        if today in statistics[stat_type]:
+            statistics[stat_type][today] += 1
+        else:
+            statistics[stat_type][today] = 1
+
+        # Для общего счетчика AI анализа
+        if stat_type == "ai_analysis":
+            statistics["total_ai_used"] += 1
 
 
 @bot.message_handler(commands=['start'])
@@ -63,7 +89,10 @@ def handle_other_messages(message):
             bot.register_next_step_handler(msg, search_notes)
         else:
             bot.send_message(message.chat.id, "У вас пока нет заметок для поиска.")
-
+    elif text == "📊 Статистика":
+        show_statistics(message)
+    elif text in ["📈 7 дней", "📉 30 дней"]:
+        change_statistics_period(message)
     else:
         bot.send_message(message.chat.id, "Я не понял ваше сообщение. Вот меню:")
         send_main_menu(message.chat.id)
@@ -74,6 +103,7 @@ def add_note(message):
     if note_text:
         note_id = len(notes) + 1
         notes[note_id] = note_text
+        update_statistics("notes_created")
         time_to_remind = extract_time(note_text)
         if time_to_remind:
             reminders.append((message.chat.id, note_id, time_to_remind))
@@ -95,6 +125,7 @@ def delete_note(message):
         note_id = int(message.text.strip())
         if note_id in notes:
             notes.pop(note_id)
+            update_statistics("notes_deleted")
 
             # Сохраняем старые заметки с ключами
             old_notes = dict(notes)
@@ -286,6 +317,9 @@ def send_main_menu(chat_id):
         KeyboardButton("🔍 Поиск по заметкам"),
         KeyboardButton("🤖 Анализ от ИИ")
     )
+    markup.row(
+        KeyboardButton("📊 Статистика")
+    )
     bot.send_message(chat_id, "Выберите действие:", reply_markup=markup)
 
 
@@ -345,6 +379,7 @@ def analyze_notes_step2(message):
 
     try:
         note_ids = list(map(int, message.text.split(',')))
+        update_statistics("ai_analysis")
 
         selected_notes = [notes[note_id] for note_id in note_ids if note_id in notes]
 
@@ -382,6 +417,81 @@ def analyze_notes_step2(message):
         bot.send_message(message.chat.id, "Введите корректные номера заметок через запятую.")
     except Exception as e:
         bot.send_message(message.chat_id, f"Произошла ошибка: {str(e)}")
+
+
+def generate_combined_plot(days=7):
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    today = datetime.now()
+    dates = [(today - timedelta(days=i)).strftime("%m-%d") for i in range(days)][::-1]
+
+    created = [statistics["notes_created"].get(date, 0) for date in dates]
+    deleted = [statistics["notes_deleted"].get(date, 0) for date in dates]
+    ai_used = [statistics["ai_analysis"].get(date, 0) for date in dates]
+
+    # Создание графика
+    ax.plot(dates, created, marker='o', label='Создано заметок', linewidth=2)
+    ax.plot(dates, deleted, marker='s', label='Удалено заметок', linewidth=2)
+    ax.plot(dates, ai_used, marker='^', label='AI анализов', linewidth=2)
+
+    # Настройки отображения
+    ax.set_title(f"Статистика активности за {days} дней", pad=20, fontsize=14)
+    ax.set_xlabel("Дата", fontsize=12)
+    ax.set_ylabel("Количество", fontsize=12)
+    ax.tick_params(axis='x', rotation=45, labelsize=10)
+    ax.tick_params(axis='y', labelsize=10)
+    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.legend(fontsize=12)
+
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=120, bbox_inches='tight')
+    buf.seek(0)
+    plt.close(fig)
+
+    return buf
+
+
+def send_statistics_plot(chat_id, days):
+    plot = generate_combined_plot(days)
+
+    stats_text = (
+        f"📊 Статистика за {days} дней:\n"
+        f"• Всего заметок создано: {sum(statistics['notes_created'].values())}\n"
+        f"• Всего заметок удалено: {sum(statistics['notes_deleted'].values())}\n"
+        f"• Всего AI анализов: {statistics['total_ai_used']}"
+    )
+
+    bot.send_photo(chat_id, plot, caption=stats_text)
+    plot.close()
+
+
+def show_statistics(message):
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    markup.add(
+        KeyboardButton("📈 7 дней"),
+        KeyboardButton("📉 30 дней"),
+    )
+    markup.add(
+        KeyboardButton("🔙 Назад")
+    )
+
+    bot.send_message(
+        message.chat.id,
+        "Выберите период для отображения статистики:",
+        reply_markup=markup
+    )
+
+
+@bot.message_handler(func=lambda message: message.text in ["📈 7 дней", "📉 30 дней"])
+def change_statistics_period(message):
+    days_map = {
+        "📈 7 дней": 7,
+        "📉 30 дней": 30
+    }
+    send_statistics_plot(message.chat.id, days_map[message.text])
+    show_statistics(message)
 
 
 threading.Thread(target=reminder_worker, daemon=True).start()
