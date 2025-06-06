@@ -46,7 +46,6 @@ def update_statistics(stat_type):
         else:
             statistics[stat_type][today] = 1
 
-        # Для общего счетчика AI анализа
         if stat_type == "ai_analysis":
             statistics["total_ai_used"] += 1
 
@@ -93,6 +92,9 @@ def handle_other_messages(message):
         show_statistics(message)
     elif text in ["📈 7 дней", "📉 30 дней"]:
         change_statistics_period(message)
+    elif text == "📤 Экспорт заметок":
+        export_notes_step1(message)
+
     else:
         bot.send_message(message.chat.id, "Я не понял ваше сообщение. Вот меню:")
         send_main_menu(message.chat.id)
@@ -318,7 +320,8 @@ def send_main_menu(chat_id):
         KeyboardButton("🤖 Анализ от ИИ")
     )
     markup.row(
-        KeyboardButton("📊 Статистика")
+        KeyboardButton("📊 Статистика"),
+        KeyboardButton("📤 Экспорт заметок")
     )
     bot.send_message(chat_id, "Выберите действие:", reply_markup=markup)
 
@@ -484,7 +487,6 @@ def show_statistics(message):
     )
 
 
-@bot.message_handler(func=lambda message: message.text in ["📈 7 дней", "📉 30 дней"])
 def change_statistics_period(message):
     days_map = {
         "📈 7 дней": 7,
@@ -492,6 +494,42 @@ def change_statistics_period(message):
     }
     send_statistics_plot(message.chat.id, days_map[message.text])
     show_statistics(message)
+
+
+def export_notes_step1(message):
+    if not notes:
+        bot.send_message(message.chat.id, "У вас пока нет заметок для экспорта.")
+        send_main_menu(message.chat.id)
+        return
+
+    send_notes_list(message.chat.id)
+    bot.send_message(message.chat.id, "Введите номера заметок через запятую, которые хотите экспортировать:")
+    bot.register_next_step_handler(message, export_notes_step2)
+
+
+def export_notes_step2(message):
+    try:
+
+        note_ids = list(map(int, message.text.split(',')))
+        selected_notes = [notes[note_id] for note_id in note_ids if note_id in notes]
+
+        if not selected_notes:
+            bot.send_message(message.chat.id, "Вы ввели некорректные номера заметок. Попробуйте снова.")
+            return
+
+        for note_id, note_text in zip(note_ids, selected_notes):
+            file_name = f"note_{note_id}.txt"
+            with open(file_name, "w", encoding="utf-8") as file:
+                file.write(note_text)
+
+            with open(file_name, "rb") as file:
+                bot.send_document(message.chat.id, file, caption=f"Заметка #{note_id}")
+
+        bot.send_message(message.chat.id, "Экспорт завершён.")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Произошла ошибка при экспорте заметок: {str(e)}")
+    finally:
+        send_main_menu(message.chat.id)
 
 
 threading.Thread(target=reminder_worker, daemon=True).start()
