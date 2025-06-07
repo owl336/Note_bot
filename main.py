@@ -30,21 +30,18 @@ current_page = {}  # {chat_id: page_number}
 
 
 def get_user_notes(chat_id):
-    """Получить заметки пользователя"""
     if chat_id not in user_notes:
         user_notes[chat_id] = {}
     return user_notes[chat_id]
 
 
 def get_user_reminders(chat_id):
-    """Получить напоминания пользователя"""
     if chat_id not in user_reminders:
         user_reminders[chat_id] = []
     return user_reminders[chat_id]
 
 
 def get_user_statistics(chat_id):
-    """Получить статистику пользователя"""
     if chat_id not in user_statistics:
         user_statistics[chat_id] = {
             "notes_created": {},  # {date: count}
@@ -56,7 +53,6 @@ def get_user_statistics(chat_id):
 
 
 def update_user_statistics(chat_id, stat_type):
-    """Обновить статистику пользователя"""
     stats = get_user_statistics(chat_id)
     today = datetime.now().strftime("%m-%d")
 
@@ -168,7 +164,6 @@ def delete_note(message):
             notes.clear()
             for new_id, old_id in enumerate(sorted(old_notes.keys()), start=1):
                 notes[new_id] = old_notes[old_id]
-
 
             new_reminders = []
             for rem_note_id, rem_time in reminders:
@@ -606,7 +601,7 @@ def about_bot(message):
         "• 🤖 Анализ от ИИ\n"
         "• 📊 Статистика\n"
         "• 📤 Экспорт заметок\n\n"
-        "⚙️ Если у вас есть вопросы, свяжитесь с разработчиком."
+        "⚙️ Если у вас есть вопросы или предложения, свяжитесь с разработчиком ([@the\\_forest\\_owl](https://t.me/the_forest_owl))."
     )
     bot.send_message(message.chat.id, bot_info, parse_mode="Markdown")
 
