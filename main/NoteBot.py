@@ -3,10 +3,10 @@ import os
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 
-from Note_bot.main.UI.UIManager import UIManager
+from Note_bot.main.ui.UIManager import UIManager
 from Note_bot.main.service.NoteService import NoteManager
 from Note_bot.main.service.AIService import AIService
-from Note_bot.main.Data.UserDataManager import UserDataManager
+from Note_bot.main.data.UserDataManager import UserDataManager
 from Note_bot.main.service.ReminderWorkerService import ReminderWorkerService
 
 
